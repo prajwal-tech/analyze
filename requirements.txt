@@ -6,5 +6,4 @@ python-Levenshtein
 wave
 streamlit
 matplotlib
-sounddevice
 transformers
