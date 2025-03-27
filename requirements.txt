@@ -2,9 +2,9 @@ torch
 torchaudio
 numpy
 nltk
-python-Levenshtein
+Levenshtein
+wave
 streamlit
 matplotlib
+pyaudio
 transformers
-cmake
-sounddevice
