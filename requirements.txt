@@ -3,7 +3,7 @@ torchaudio
 numpy
 nltk
 python-Levenshtein
-wave
 streamlit
+SpeechRecognition
 matplotlib
 transformers
