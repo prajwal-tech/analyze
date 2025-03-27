@@ -1,8 +1,9 @@
 torch
 torchaudio
-transformers
+numpy
 nltk
 Levenshtein
 streamlit
 plotly
-pyaudio
+transformers
+soundfile
