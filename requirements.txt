@@ -2,8 +2,8 @@ torch
 torchaudio
 numpy
 nltk
-Levenshtein
+python-Levenshtein
 streamlit
-plotly
+matplotlib
+pyaudio
 transformers
-soundfile
