@@ -3,63 +3,55 @@ import torchaudio
 import numpy as np
 import nltk
 import Levenshtein
+import wave
 import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import pyaudio
 from nltk.corpus import cmudict
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC
 
-# 📌 Download CMU Pronouncing Dictionary
+# Download CMU Pronouncing Dictionary
 nltk.download("cmudict")
 pron_dict = cmudict.dict()
 
-# 🎙 Load Wav2Vec2 model
+# Load Wav2Vec2 model
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
 model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
 
-# 🌟 Streamlit Page Configuration
-st.set_page_config(page_title="AI Read-Aloud Analyzer", page_icon="📖", layout="centered")
+# Function to capture live speech (No File Saving)
+def record_audio(duration=5, sample_rate=16000, channels=1):
+    st.write("🎙️ Recording... Speak now!")
+    audio_format = pyaudio.paInt16  
+    frames_per_buffer = 1024  
+    audio = pyaudio.PyAudio()
 
-# 🎨 Custom CSS for better UI styling
-st.markdown("""
-    <style>
-    .stApp {background: linear-gradient(to right, #ffffff, #e3f2fd);}
-    .title {color: #004d99; font-size: 28px; font-weight: bold;}
-    </style>
-""", unsafe_allow_html=True)
+    stream = audio.open(format=audio_format, channels=channels, rate=sample_rate, input=True, frames_per_buffer=frames_per_buffer)
+    frames = [stream.read(frames_per_buffer) for _ in range(0, int(sample_rate / frames_per_buffer * duration))]
+    stream.stop_stream()
+    stream.close()
+    audio.terminate()
 
-# 🔄 Function to resample audio to 16kHz
-def resample_audio(file_path, target_sample_rate=16000):
-    waveform, sample_rate = torchaudio.load(file_path)
-    if sample_rate != target_sample_rate:
-        transform = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=target_sample_rate)
-        waveform = transform(waveform)
-    return waveform.squeeze().numpy()
+    return np.frombuffer(b''.join(frames), dtype=np.int16)
 
-# 🎙 Convert speech to text
-def transcribe_audio(file_path):
-    try:
-        speech = resample_audio(file_path)
-        input_values = processor(torch.tensor(speech, dtype=torch.float32).unsqueeze(0), return_tensors="pt", sampling_rate=16000).input_values
-        
-        with torch.no_grad():
-            logits = model(input_values).logits
-        predicted_ids = torch.argmax(logits, dim=-1)
-        return processor.batch_decode(predicted_ids)[0]
-    except Exception as e:
-        st.error(f"Error transcribing audio: {e}")
-        return ""
-
-# 🔡 Convert text to phonemes
+# Convert text to phonemes
 def text_to_phonemes(text):
     words = text.lower().split()
     return {word: pron_dict.get(word, [["UNK"]])[0] for word in words}
 
-# ✅ Compare phonemes and suggest corrections
+# Convert speech to text (STT)
+def transcribe_audio(audio_data, sample_rate=16000):
+    speech = audio_data.astype(np.float32) / np.iinfo(np.int16).max
+    input_values = processor(speech, return_tensors="pt", sampling_rate=sample_rate).input_values
+    with torch.no_grad():
+        logits = model(input_values).logits
+    predicted_ids = torch.argmax(logits, dim=-1)
+    return processor.batch_decode(predicted_ids)[0]
+
+# Compare phonemes and suggest corrections
 def compare_phonemes(expected_phonemes, spoken_phonemes):
-    word_feedback = {}
     total_accuracy = 0
     total_words = len(expected_phonemes)
+    word_feedback = {}
 
     for word, expected in expected_phonemes.items():
         spoken = spoken_phonemes.get(word, ["UNK"])
@@ -68,70 +60,108 @@ def compare_phonemes(expected_phonemes, spoken_phonemes):
         accuracy = 1 - (edit_distance / max_length) if max_length > 0 else 0
         total_accuracy += accuracy
 
-        correction = f"Try saying '{word}' as /{' '.join(expected)}/" if accuracy < 0.8 else "Good pronunciation!"
-        word_feedback[word] = {"Expected": " ".join(expected), "Spoken": " ".join(spoken), "Accuracy": round(accuracy * 100, 2), "Correction": correction}
+        word_feedback[word] = {
+            "Expected": " ".join(expected),
+            "Spoken": " ".join(spoken),
+            "Accuracy": round(accuracy * 100, 2),
+            "Correction": f"Try saying '{word}' as /{' '.join(expected)}/" if accuracy < 0.8 else "✅ Good pronunciation!"
+        }
 
     overall_accuracy = round((total_accuracy / total_words) * 100, 2) if total_words > 0 else 0
     return overall_accuracy, word_feedback
 
-# 📊 Generate charts for pronunciation analysis
-def generate_graphs(word_feedback, overall_accuracy):
+# Calculate fluency score
+def calculate_fluency(reference_text, duration):
+    words_per_minute = (len(reference_text.split()) / duration) * 60
+    return min(100, words_per_minute / 150 * 100)  # Normalize to percentage
+
+# Function to plot pie chart (Fixed)
+def plot_pie_chart(fluency_score, pronunciation_accuracy):
+    plt.figure(figsize=(4, 4))
+    labels = ["Fluency Score", "Pronunciation Accuracy"]
+    sizes = [max(0, fluency_score), max(0, pronunciation_accuracy)]  # Ensure non-negative
+
+    if sum(sizes) == 0:
+        st.write("⚠️ Not enough data for pie chart (both values are zero).")
+        return  
+
+    plt.pie(sizes, labels=labels, autopct="%1.1f%%", colors=["#ff9999", "#66b3ff"])
+    plt.title("Fluency vs. Pronunciation Accuracy")
+    st.pyplot(plt)
+
+# Function to plot bar chart
+def plot_bar_chart(word_feedback):
+    plt.figure(figsize=(6, 4))
     words = list(word_feedback.keys())
-    accuracies = [feedback["Accuracy"] for feedback in word_feedback.values()]
+    accuracies = [word_feedback[word]["Accuracy"] for word in words]
 
-    # 📊 Bar Chart (Word-by-Word Accuracy)
-    bar_chart = px.bar(x=words, y=accuracies, labels={'x': 'Words', 'y': 'Pronunciation Accuracy (%)'},
-                        title="🔍 Word Accuracy", color=accuracies, color_continuous_scale='blues')
+    plt.bar(words, accuracies, color=["green" if acc > 80 else "red" for acc in accuracies])
+    plt.xlabel("Words")
+    plt.ylabel("Pronunciation Accuracy (%)")
+    plt.title("Word-by-Word Pronunciation Accuracy")
+    plt.xticks(rotation=45)
+    st.pyplot(plt)
 
-    # 🍕 Pie Chart (Pronunciation Distribution)
-    pie_chart = go.Figure(data=[go.Pie(
-        labels=["Correct Pronunciation", "Mispronounced"], 
-        values=[overall_accuracy, 100 - overall_accuracy], 
-        hole=0.4)])
+# Function to plot dynamic trend graph
+def plot_trend_graph(fluency_scores, pronunciation_accuracies):
+    plt.figure(figsize=(6, 4))
+    x_axis = list(range(1, len(fluency_scores) + 1))
 
-    pie_chart.update_layout(title="⚖️ Pronunciation Distribution")
+    plt.plot(x_axis, fluency_scores, marker="o", linestyle="-", color="blue", label="Fluency Score")
+    plt.plot(x_axis, pronunciation_accuracies, marker="s", linestyle="-", color="green", label="Pronunciation Accuracy")
 
-    return bar_chart, pie_chart
+    plt.xlabel("Attempts")
+    plt.ylabel("Scores (%)")
+    plt.title("Pronunciation & Fluency Trend Over Time")
+    plt.legend()
+    st.pyplot(plt)
 
-# 🏠 Streamlit UI
-st.markdown("<div class='title'>📖 AI-Powered Read-Aloud Pronunciation Analyzer</div>", unsafe_allow_html=True)
+# Store trends across multiple attempts
+fluency_scores = []
+pronunciation_accuracies = []
 
-# 📂 File Uploader
-uploaded_file = st.file_uploader("Upload a WAV audio file:", type=["wav"])
+# Streamlit UI
+st.title("📖 AI-Powered Read-Aloud Pronunciation Analyzer")
 
-if uploaded_file is not None:
-    # Save the uploaded file temporarily
-    file_path = "temp_audio.wav"
-    with open(file_path, "wb") as f:
-        f.write(uploaded_file.read())
+# Input reference text
+reference_text = st.text_area("Enter the reference text:", "The quick brown fox jumps over the lazy dog")
 
-    # 🎙 Transcribe uploaded speech
-    spoken_text = transcribe_audio(file_path)
+if st.button("🎤 Start Live Speech"):
+    audio_data = record_audio(duration=5)
 
-    # 📌 Phoneme Analysis
+    # Transcribe speech
+    spoken_text = transcribe_audio(audio_data)
+
+    # Extract phonemes
+    expected_phonemes = text_to_phonemes(reference_text)
     spoken_phonemes = text_to_phonemes(spoken_text)
 
-    # ✅ Pronunciation Accuracy
-    overall_accuracy, word_feedback = compare_phonemes(spoken_phonemes, spoken_phonemes)
+    # Pronunciation accuracy and correction suggestions
+    overall_accuracy, word_feedback = compare_phonemes(expected_phonemes, spoken_phonemes)
 
-    # 📊 Generate Graphs
-    bar_chart, pie_chart = generate_graphs(word_feedback, overall_accuracy)
+    # Fluency scoring
+    fluency = calculate_fluency(reference_text, duration=5)
 
-    # 📌 Display Results
+    # Store scores for trend graph
+    fluency_scores.append(fluency)
+    pronunciation_accuracies.append(overall_accuracy)
+
+    # Display results
     st.subheader("📑 Pronunciation Analysis")
+    st.write(f"✅ **You Said:** {spoken_text}")
     st.write(f"🔠 **Overall Pronunciation Accuracy:** {overall_accuracy}%")
+    st.write(f"⚡ **Fluency Score:** {round(fluency, 2)}%")
 
-    # 📊 Show Graphs
-    st.plotly_chart(bar_chart)
-    st.plotly_chart(pie_chart)
+    # Show Graphs
+    st.subheader("📊 Visualization")
+    plot_pie_chart(fluency, overall_accuracy)
+    plot_bar_chart(word_feedback)
+    plot_trend_graph(fluency_scores, pronunciation_accuracies)
 
-    # 🔍 Word-by-Word Feedback
+    # Word-by-word analysis
     st.subheader("🔍 Word-by-Word Feedback")
     for word, feedback in word_feedback.items():
-        color = "green" if feedback["Accuracy"] > 80 else "red"
-        st.markdown(f"**{word}**: <span style='color:{color}'>({feedback['Accuracy']}%)</span>", unsafe_allow_html=True)
+        st.write(f"**{word}**: ({feedback['Accuracy']}%)")
         st.write(f"📌 **Expected Phonemes:** {feedback['Expected']}")
         st.write(f"🎙 **Spoken Phonemes:** {feedback['Spoken']}")
         st.write(f"🛠 **Correction Suggestion:** {feedback['Correction']}")
-
-st.success("🎉 Upload an audio file and analyze your speech!")
