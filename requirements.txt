@@ -7,3 +7,4 @@ streamlit
 matplotlib
 transformers
 cmake
+sounddevice
