@@ -5,3 +5,4 @@ nltk
 Levenshtein
 streamlit
 plotly
+pyaudio
