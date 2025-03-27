@@ -5,5 +5,5 @@ nltk
 python-Levenshtein
 streamlit
 matplotlib
-pyaudio
 transformers
+cmake
