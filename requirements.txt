@@ -2,7 +2,7 @@ torch
 torchaudio
 numpy
 nltk
-Levenshtein
+python-Levenshtein
 wave
 streamlit
 matplotlib
