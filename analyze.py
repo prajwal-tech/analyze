@@ -6,7 +6,7 @@ import Levenshtein
 import wave
 import streamlit as st
 import matplotlib.pyplot as plt
-import pyaudio
+import sounddevice as sd
 from nltk.corpus import cmudict
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC
 
@@ -18,20 +18,12 @@ pron_dict = cmudict.dict()
 processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
 model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
 
-# Function to capture live speech (No File Saving)
+# Function to capture live speech using sounddevice
 def record_audio(duration=5, sample_rate=16000, channels=1):
     st.write("🎙️ Recording... Speak now!")
-    audio_format = pyaudio.paInt16  
-    frames_per_buffer = 1024  
-    audio = pyaudio.PyAudio()
-
-    stream = audio.open(format=audio_format, channels=channels, rate=sample_rate, input=True, frames_per_buffer=frames_per_buffer)
-    frames = [stream.read(frames_per_buffer) for _ in range(0, int(sample_rate / frames_per_buffer * duration))]
-    stream.stop_stream()
-    stream.close()
-    audio.terminate()
-
-    return np.frombuffer(b''.join(frames), dtype=np.int16)
+    audio_data = sd.rec(int(duration * sample_rate), samplerate=sample_rate, channels=channels, dtype='int16')
+    sd.wait()  # Wait until recording is finished
+    return audio_data.flatten()
 
 # Convert text to phonemes
 def text_to_phonemes(text):
@@ -75,12 +67,12 @@ def calculate_fluency(reference_text, duration):
     words_per_minute = (len(reference_text.split()) / duration) * 60
     return min(100, words_per_minute / 150 * 100)  # Normalize to percentage
 
-# Function to plot pie chart (Fixed)
+# Function to plot pie chart
 def plot_pie_chart(fluency_score, pronunciation_accuracy):
     plt.figure(figsize=(4, 4))
     labels = ["Fluency Score", "Pronunciation Accuracy"]
-    sizes = [max(0, fluency_score), max(0, pronunciation_accuracy)]  # Ensure non-negative
-
+    sizes = [max(0, fluency_score), max(0, pronunciation_accuracy)]
+    
     if sum(sizes) == 0:
         st.write("⚠️ Not enough data for pie chart (both values are zero).")
         return  
@@ -102,7 +94,7 @@ def plot_bar_chart(word_feedback):
     plt.xticks(rotation=45)
     st.pyplot(plt)
 
-# Function to plot dynamic trend graph
+# Function to plot trend graph
 def plot_trend_graph(fluency_scores, pronunciation_accuracies):
     plt.figure(figsize=(6, 4))
     x_axis = list(range(1, len(fluency_scores) + 1))
